@@ -243,6 +243,9 @@ class CelebrightSensor(CelebrightEntity, SensorEntity):
                     "name": ev.name,
                     "scene": self.coordinator.scene_name_for_uuid(self._device_id, ev.scene_uuid)
                              or "Unknown scene",
+                    # Scene names are not unique (e.g. two "Canada Day" looks),
+                    # so expose the UUID the event actually points at.
+                    "scene_uuid": ev.scene_uuid,
                     "when": ev.when_text,
                     "time": ev.time_text,
                     "priority": ev.priority,

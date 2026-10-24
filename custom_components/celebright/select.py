@@ -63,6 +63,17 @@ class CelebrightSceneSelect(CelebrightEntity, SelectEntity):
         return [_OPTION_OFF] + [s.name for s in scenes]
 
     @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        # Scene names can repeat (e.g. two different "Canada Day" looks), so
+        # list name + UUID pairs for anything that must pick an exact scene.
+        return {
+            "scenes": [
+                {"name": s.name, "uuid": s.uuid}
+                for s in self.coordinator.scenes.get(self._device_id, [])
+            ]
+        }
+
+    @property
     def current_option(self) -> str:
         state = self._device_state
         if not state or not state.is_on:
