@@ -34,9 +34,12 @@ class CelebrightConfigFlow(ConfigFlow, domain=DOMAIN):
         errors: dict[str, str] = {}
         try:
             await self._validate(user_input[CONF_EMAIL], user_input[CONF_PASSWORD])
-        except CelebrightAuthError:
+        except CelebrightAuthError as err:
+            # Log the underlying reason; the UI only shows the generic key.
+            _LOGGER.warning("Celebright setup: authentication failed: %s", err)
             errors["base"] = "invalid_auth"
-        except CelebrightConnectionError:
+        except CelebrightConnectionError as err:
+            _LOGGER.warning("Celebright setup: cannot connect: %s", err)
             errors["base"] = "cannot_connect"
         except Exception:
             _LOGGER.exception("Unexpected error during Celebright setup")
@@ -53,5 +56,8 @@ class CelebrightConfigFlow(ConfigFlow, domain=DOMAIN):
 
     async def _validate(self, email: str, password: str) -> None:
         client = CelebrightCloudAPI(email=email, password=password)
-        await client.async_connect()
-        await client.async_disconnect()
+        try:
+            await client.async_connect()
+        finally:
+            # Always close the aiohttp session, including on auth failure.
+            await client.async_disconnect()
