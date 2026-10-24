@@ -135,21 +135,24 @@ class CelebrightLight(CelebrightEntity, LightEntity):
 
         try:
             await self.coordinator.client.async_set_color(self._device_id, hex_color)
-            self._last_hex = hex_color
-            # setColor clears any active saved scene
-            self.coordinator.set_active_scene(self._device_id, None)
         except (CelebrightCommandError, CelebrightConnectionError) as err:
             _LOGGER.error("Celebright turn_on failed for %s: %s", self._device_id, err)
             return
 
-        await self.coordinator.async_request_refresh()
+        self._last_hex = hex_color
+        # Show the result now; the coordinator holds it until the cloud agrees.
+        # (No immediate refresh: the cloud still reports the old state for a
+        # poll or two, and an instant re-poll would just overwrite this.)
+        # setColor clears any active saved scene, hence scene_uuid=None.
+        self.coordinator.set_optimistic(
+            self._device_id, is_on=True, display="On - User Display", color_hex=hex_color
+        )
 
     async def async_turn_off(self, **kwargs: Any) -> None:
         try:
             await self.coordinator.client.async_resume_schedule(self._device_id)
-            self.coordinator.set_active_scene(self._device_id, None)
         except (CelebrightCommandError, CelebrightConnectionError) as err:
             _LOGGER.error("Celebright turn_off failed for %s: %s", self._device_id, err)
             return
 
-        await self.coordinator.async_request_refresh()
+        self.coordinator.set_optimistic(self._device_id, is_on=False, display="Off")

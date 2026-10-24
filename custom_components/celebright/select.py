@@ -76,18 +76,21 @@ class CelebrightSceneSelect(CelebrightEntity, SelectEntity):
         try:
             if option == _OPTION_OFF:
                 await self.coordinator.client.async_resume_schedule(self._device_id)
-                self.coordinator.set_active_scene(self._device_id, None)
+                self.coordinator.set_optimistic(self._device_id, is_on=False, display="Off")
             else:
                 uuid = self.coordinator.uuid_for_scene_name(self._device_id, option)
                 if not uuid:
                     _LOGGER.error("Scene %r not found for device %s", option, self._device_id)
                     return
                 await self.coordinator.client.async_load_scene(self._device_id, uuid)
-                self.coordinator.set_active_scene(self._device_id, uuid)
+                # Cloud reports an active scene's name as its "Current Display".
+                self.coordinator.set_optimistic(
+                    self._device_id, is_on=True, display=option, scene_uuid=uuid
+                )
         except (CelebrightCommandError, CelebrightConnectionError) as err:
             _LOGGER.error(
                 "Scene select failed for %s → %r: %s", self._device_id, option, err
             )
             return
-
-        await self.coordinator.async_request_refresh()
+        # No immediate refresh; the coordinator holds the optimistic state
+        # until the cloud's status catches up (see set_optimistic).

@@ -17,6 +17,11 @@ _LOGGER = logging.getLogger(__name__)
 # Scenes/schedule change rarely — auto-refresh them at most this often (seconds).
 SCENE_REFRESH_INTERVAL = 1800  # 30 minutes
 
+# After an HA-initiated command the cloud status endpoint lags the device by
+# up to a poll cycle or two. Hold the optimistic state until the cloud agrees,
+# or this many seconds pass (then trust the cloud again).
+OPTIMISTIC_HOLD_SECONDS = 90
+
 
 class CelebrightCoordinator(DataUpdateCoordinator[dict[str, DeviceState]]):
     """Polls device statuses; device info and scene lists are fetched once at setup."""
@@ -38,6 +43,8 @@ class CelebrightCoordinator(DataUpdateCoordinator[dict[str, DeviceState]]):
         self.scenes: dict[str, list[SceneInfo]] = {}
         # Optimistic active-scene tracking — device_id → scene_uuid | None
         self._active_scenes: dict[str, str | None] = {}
+        # Pending optimistic on/off — device_id → (expected_is_on, expires_monotonic)
+        self._pending: dict[str, tuple[bool, float]] = {}
         # When scenes/device-info were last pulled (monotonic seconds)
         self._last_scene_refresh: float = 0.0
 
@@ -66,6 +73,28 @@ class CelebrightCoordinator(DataUpdateCoordinator[dict[str, DeviceState]]):
             statuses = await self.client.async_get_device_statuses()
         except CelebrightConnectionError as err:
             raise UpdateFailed(f"Celebright unreachable: {err}") from err
+
+        # Reconcile any optimistic state from a recent HA command: keep it until
+        # the cloud reports the same on/off, or the hold window expires.
+        now = time.monotonic()
+        previous = self.data or {}
+        for device_id, state in statuses.items():
+            pending = self._pending.get(device_id)
+            if not pending:
+                continue
+            expected_on, expires = pending
+            if state.is_on == expected_on or now >= expires:
+                self._pending.pop(device_id, None)
+                continue
+            prev = previous.get(device_id)
+            if prev is not None:
+                state.is_on = prev.is_on
+                state.current_display = prev.current_display
+                state.color_hex = prev.color_hex
+                state.brightness = prev.brightness
+                state.active_scene_uuid = prev.active_scene_uuid
+            else:
+                state.is_on = expected_on
 
         for device_id, state in statuses.items():
             if not state.is_on:
@@ -114,6 +143,41 @@ class CelebrightCoordinator(DataUpdateCoordinator[dict[str, DeviceState]]):
 
     def set_active_scene(self, device_id: str, scene_uuid: str | None) -> None:
         self._active_scenes[device_id] = scene_uuid
+
+    def set_optimistic(
+        self,
+        device_id: str,
+        *,
+        is_on: bool,
+        display: str,
+        color_hex: str | None = None,
+        scene_uuid: str | None = None,
+    ) -> None:
+        """Show a just-sent command's result immediately, before the cloud catches up.
+
+        Mutates the current state in place, notifies entities, and records a
+        pending expectation that _async_update_data holds until the cloud agrees.
+        """
+        state = (self.data or {}).get(device_id)
+        if state is None:
+            return
+        state.is_on = is_on
+        state.current_display = display
+        state.active_scene_uuid = scene_uuid if is_on else None
+        if is_on and color_hex:
+            state.color_hex = color_hex
+            try:
+                state.brightness = max(
+                    int(color_hex[i:i + 2], 16) for i in (0, 2, 4)
+                )
+            except ValueError:
+                state.brightness = None
+        elif not is_on:
+            state.color_hex = None
+            state.brightness = None
+        self._active_scenes[device_id] = state.active_scene_uuid
+        self._pending[device_id] = (is_on, time.monotonic() + OPTIMISTIC_HOLD_SECONDS)
+        self.async_update_listeners()
 
     # ------------------------------------------------------------------
     # Refresh (scenes + device info/schedule)
