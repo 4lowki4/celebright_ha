@@ -1,11 +1,14 @@
 """AWS Cognito authentication for Celebright.
 
-Uses USER_PASSWORD_AUTH flow (simpler than SRP) — requires this flow to be
-enabled on the Celebright Cognito User Pool. If it's disabled, switch to
-USER_SRP_AUTH by using the `warrant` or `pycognito` library.
+Login uses the USER_SRP_AUTH flow (SRP-6a PASSWORD_VERIFIER challenge), which
+is what Celebright's Cognito app client has enabled. The earlier
+USER_PASSWORD_AUTH attempt was rejected pool-wide with
+`InvalidParameterException: USER_PASSWORD_AUTH flow not enabled`. The SRP math
+lives in srp.py (dependency-free, no boto3/pycognito).
 
 Token refresh is handled automatically: when the 1-hour access token expires,
-the refresh token (valid for 30 days) is used to obtain new tokens.
+the refresh token (valid for 30 days) is used to obtain new tokens. Refresh
+still uses REFRESH_TOKEN_AUTH, which needs no SRP.
 """
 from __future__ import annotations
 
@@ -16,6 +19,7 @@ from dataclasses import dataclass
 
 import aiohttp
 
+from . import srp
 from .base import CelebrightAuthError, CelebrightConnectionError
 from ..const import (
     AWS_REGION,
@@ -99,20 +103,62 @@ class CelebrightAuth:
     # ------------------------------------------------------------------
 
     async def _cognito_login(self) -> CognitoTokens:
-        payload = {
-            "AuthFlow": "USER_PASSWORD_AUTH",
-            "ClientId": COGNITO_CLIENT_ID,
-            "AuthParameters": {
-                "USERNAME": self._email,
-                "PASSWORD": self._password,
+        """USER_SRP_AUTH: InitiateAuth (SRP_A) → PASSWORD_VERIFIER challenge."""
+        # Step 1: InitiateAuth with our public value A.
+        small_a, big_a_hex = srp.generate_a()
+        init = await self._cognito_idp_call(
+            "AWSCognitoIdentityProviderService.InitiateAuth",
+            {
+                "AuthFlow": "USER_SRP_AUTH",
+                "ClientId": COGNITO_CLIENT_ID,
+                "AuthParameters": {
+                    "USERNAME": self._email,
+                    "SRP_A": big_a_hex,
+                },
             },
-        }
-        body = await self._cognito_idp_call(
-            "AWSCognitoIdentityProviderService.InitiateAuth", payload
         )
-        result = body.get("AuthenticationResult", {})
+
+        challenge = init.get("ChallengeName")
+        if challenge != "PASSWORD_VERIFIER":
+            raise CelebrightAuthError(
+                f"Unexpected Cognito challenge '{challenge}' "
+                "(MFA / new-password flows aren't supported)"
+            )
+
+        params = init.get("ChallengeParameters", {})
+        try:
+            timestamp, signature = srp.process_challenge(
+                small_a=small_a,
+                big_a_hex=big_a_hex,
+                user_id_for_srp=params["USER_ID_FOR_SRP"],
+                password=self._password,
+                user_pool_id=COGNITO_USER_POOL_ID,
+                salt_hex=params["SALT"],
+                srp_b_hex=params["SRP_B"],
+                secret_block_b64=params["SECRET_BLOCK"],
+            )
+        except KeyError as err:
+            raise CelebrightConnectionError(
+                f"Cognito SRP challenge missing field {err}"
+            ) from err
+
+        # Step 2: answer the PASSWORD_VERIFIER challenge.
+        resp = await self._cognito_idp_call(
+            "AWSCognitoIdentityProviderService.RespondToAuthChallenge",
+            {
+                "ChallengeName": "PASSWORD_VERIFIER",
+                "ClientId": COGNITO_CLIENT_ID,
+                "ChallengeResponses": {
+                    "USERNAME": params["USER_ID_FOR_SRP"],
+                    "PASSWORD_CLAIM_SECRET_BLOCK": params["SECRET_BLOCK"],
+                    "PASSWORD_CLAIM_SIGNATURE": signature,
+                    "TIMESTAMP": timestamp,
+                },
+            },
+        )
+        result = resp.get("AuthenticationResult", {})
         if not result.get("IdToken"):
-            raise CelebrightAuthError("USER_PASSWORD_AUTH not enabled on this pool; SRP flow required")
+            raise CelebrightAuthError("SRP login failed (no tokens returned)")
         return _parse_tokens(result)
 
     async def _cognito_refresh(self, refresh_token: str) -> CognitoTokens:

@@ -1,6 +1,6 @@
 """Celebright cloud API — REST polling + AWS IoT MQTT control.
 
-Auth:    Cognito USER_PASSWORD_AUTH → IdToken (REST) + temp AWS creds (MQTT)
+Auth:    Cognito USER_SRP_AUTH → IdToken (REST) + temp AWS creds (MQTT)
 State:   POST app-api.celebright.com/getUserDeviceStatuses  (REST, polled)
 Control: MQTT PUBLISH via AWS IoT WebSocket (SigV4 signed)
 """
