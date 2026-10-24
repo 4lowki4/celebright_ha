@@ -9,9 +9,34 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import EntityCategory
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
+from homeassistant.util import dt as dt_util
 
 from .coordinator import CelebrightCoordinator
 from .entity import CelebrightEntity
+
+
+def _epoch_to_local_date(value: Any) -> str | None:
+    """Celebright stores dates as epoch seconds at local midnight → 'YYYY-MM-DD'."""
+    if not isinstance(value, (int, float)) or value <= 0:
+        return None
+    return dt_util.as_local(dt_util.utc_from_timestamp(value)).date().isoformat()
+
+
+def _raw_schedule_fields(raw: dict[str, Any]) -> dict[str, Any]:
+    """Raw recurrence fields for one event (dates as local ISO dates)."""
+    return {
+        "start_date": _epoch_to_local_date(raw.get("startDate")),
+        "end_date": _epoch_to_local_date(raw.get("endDate")),
+        "repeat_until": _epoch_to_local_date(raw.get("repeatUntil")),
+        "start_time_code": raw.get("startTime"),
+        "end_time_code": raw.get("endTime"),
+        "frequency": raw.get("frequency"),
+        "interval": raw.get("interval"),
+        "by_day": raw.get("byDay"),
+        "by_month": raw.get("byMonth"),
+        "by_month_day": raw.get("byMonthDay"),
+        "by_set_pos": raw.get("bySetPos"),
+    }
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -209,7 +234,9 @@ class CelebrightSensor(CelebrightEntity, SensorEntity):
             return {f"string_{n}": c for n, c in info.string_leds.items()}
 
         if key == "scheduled_events" and info:
-            # Resolve each event's preset UUID to a friendly scene name
+            # Resolve each event's preset UUID to a friendly scene name, and
+            # expose the raw recurrence fields so the schedule can be audited
+            # (year, end date, repeat rule) and edited faithfully.
             events = [
                 {
                     "uuid": ev.uuid,
@@ -219,6 +246,7 @@ class CelebrightSensor(CelebrightEntity, SensorEntity):
                     "when": ev.when_text,
                     "time": ev.time_text,
                     "priority": ev.priority,
+                    **_raw_schedule_fields(ev.raw or {}),
                 }
                 for ev in info.events
             ]
