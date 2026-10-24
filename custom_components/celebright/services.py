@@ -22,7 +22,12 @@ SERVICE_UPDATE_EVENT = "update_event"
 SERVICE_DELETE_EVENT = "delete_event"
 SERVICE_REFRESH_SCENES = "refresh_scenes"
 
-# Recurrence frequency: 1 = one-time / seasonal range, 4 = yearly (matches the app)
+# Recurrence frequency, as the app stores it (verified against live events):
+#   0 = one-time (interval stored as null)
+#   1 = every night from start_date until repeat_until (a "season")
+#   4 = every year (by_month + by_month_day, or by_month + by_day + by_set_pos)
+# Frequency 1 without repeat_until would repeat nightly forever, so it is rejected.
+FREQ_ONCE, FREQ_NIGHTLY, FREQ_YEARLY = 0, 1, 4
 _WEEKDAYS = {"MO", "TU", "WE", "TH", "FR", "SA", "SU"}
 
 # Shared field block for create / update
@@ -34,11 +39,13 @@ _EVENT_FIELDS = {
     vol.Required("end_date"): cv.string,
     vol.Required("start_time"): cv.string,  # sunset|sunrise|midnight|HH:MM
     vol.Required("end_time"): cv.string,
-    vol.Optional("priority", default=3): vol.All(vol.Coerce(int), vol.Range(min=1, max=4)),
+    vol.Optional("priority", default=3): vol.All(vol.Coerce(int), vol.Range(min=1, max=5)),
     # The GUI "frequency" field is a select selector, which always submits its
-    # option value as a string ("1"/"4") — vol.Coerce lets that and a bare int
-    # (from YAML) both validate.
-    vol.Optional("frequency", default=1): vol.All(vol.Coerce(int), vol.In([1, 4])),
+    # option value as a string ("0"/"1"/"4") — vol.Coerce lets that and a bare
+    # int (from YAML) both validate. Default is one-time.
+    vol.Optional("frequency", default=FREQ_ONCE): vol.All(
+        vol.Coerce(int), vol.In([FREQ_ONCE, FREQ_NIGHTLY, FREQ_YEARLY])
+    ),
     vol.Optional("interval", default=1): cv.positive_int,
     vol.Optional("repeat_until"): cv.string,
     vol.Optional("by_day"): cv.string,
@@ -143,6 +150,12 @@ def _build_event_kwargs(hass: HomeAssistant, coord, device_id: str, data: dict) 
     if by_day and by_day.upper() not in _WEEKDAYS:
         raise HomeAssistantError(f"by_day must be one of {sorted(_WEEKDAYS)}")
     repeat_until = data.get("repeat_until")
+    frequency = data["frequency"]
+    if frequency == FREQ_NIGHTLY and not repeat_until:
+        raise HomeAssistantError(
+            "A nightly (frequency 1) event needs repeat_until, otherwise it "
+            "would repeat every night forever"
+        )
     return {
         "name": data["name"],
         "scene_uuid": _resolve_scene_uuid(coord, device_id, data["scene"]),
@@ -151,8 +164,9 @@ def _build_event_kwargs(hass: HomeAssistant, coord, device_id: str, data: dict) 
         "start_time": _parse_time(data["start_time"]),
         "end_time": _parse_time(data["end_time"]),
         "priority": data["priority"],
-        "frequency": data["frequency"],
-        "interval": data["interval"],
+        "frequency": frequency,
+        # The app stores interval as null for one-time events.
+        "interval": None if frequency == FREQ_ONCE else data["interval"],
         "repeat_until": _parse_date(hass, repeat_until) if repeat_until else None,
         "by_day": by_day.upper() if by_day else None,
         "by_month": data.get("by_month"),

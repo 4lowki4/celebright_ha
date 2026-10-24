@@ -61,19 +61,21 @@ create_event:
       selector:
         number:
           min: 1
-          max: 4
+          max: 5
           mode: slider
     frequency:
       name: Frequency
-      description: 1 = one-time / seasonal range, 4 = yearly recurring.
+      description: 0 = one-time, 1 = every night until "Repeat until" (a season; repeat_until required), 4 = every year.
       required: false
-      default: 1
+      default: "0"
       selector:
         select:
           options:
-            - label: One-time / seasonal
+            - label: One-time
+              value: "0"
+            - label: Every night until "Repeat until" (season)
               value: "1"
-            - label: Yearly
+            - label: Every year
               value: "4"
     interval:
       name: Interval
@@ -198,18 +200,20 @@ update_event:
       selector:
         number:
           min: 1
-          max: 4
+          max: 5
           mode: slider
     frequency:
       name: Frequency
       required: false
-      default: 1
+      default: "0"
       selector:
         select:
           options:
-            - label: One-time / seasonal
+            - label: One-time
+              value: "0"
+            - label: Every night until "Repeat until" (season)
               value: "1"
-            - label: Yearly
+            - label: Every year
               value: "4"
     interval:
       name: Interval

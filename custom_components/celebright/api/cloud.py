@@ -327,8 +327,8 @@ class CelebrightCloudAPI(CelebrightAPIBase):
         end_date: int,
         end_time: int,
         priority: int = 3,
-        frequency: int = 1,
-        interval: int = 1,
+        frequency: int = 0,
+        interval: int | None = None,
         repeat_until: int | None = None,
         by_day: str | None = None,
         by_month_day: int | None = None,
@@ -340,8 +340,21 @@ class CelebrightCloudAPI(CelebrightAPIBase):
 
         Time fields use Celebright codes: -2=Sunset, -1=Sunrise, 0=Midnight,
         or seconds-since-midnight. The md5 is computed to match the app exactly.
+
+        Frequency, as the app stores it: 0 = one-time (interval null),
+        1 = nightly from start_date until repeat_until, 4 = yearly.
         """
         import uuid as _uuid
+
+        if frequency == 0:
+            interval = None  # the app stores null here for one-time events
+        elif interval is None:
+            interval = 1
+        if frequency == 1 and not repeat_until:
+            raise CelebrightCommandError(
+                "Nightly (frequency 1) events need repeat_until; "
+                "without it the event would repeat every night forever"
+            )
 
         assert self._auth
         await self._auth.async_ensure_valid()
