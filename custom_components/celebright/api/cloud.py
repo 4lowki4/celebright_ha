@@ -31,6 +31,7 @@ from ..const import (
     CURRENT_DISPLAY_FIELD,
     DISPLAY_OFF,
     EP_GET_DEVICE_SCENES,
+    EP_GET_DEVICE_ZONES,
     EP_GET_DEVICE_STATUSES,
     EP_GET_USER_DATA,
     IOT_ENDPOINT,
@@ -266,6 +267,16 @@ class CelebrightCloudAPI(CelebrightAPIBase):
             for s in data.get("scenes", [])
             if s.get("uuid") and s.get("name")
         ]
+
+    async def async_export_library(self, device_id: str) -> dict[str, Any]:
+        """Raw saved-scene bodies and zone definitions for one device.
+
+        Used for backups and for building tools on top of the scene format.
+        Returns the cloud's JSON unchanged.
+        """
+        scenes = await self._post(EP_GET_DEVICE_SCENES, {"deviceId": device_id})
+        zones = await self._post(EP_GET_DEVICE_ZONES, {"deviceId": device_id})
+        return {"device_id": device_id, "scenes": scenes, "zones": zones}
 
     async def async_get_device_statuses(self) -> dict[str, DeviceState]:
         data = await self._post(EP_GET_DEVICE_STATUSES, {})

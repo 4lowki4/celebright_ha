@@ -293,3 +293,17 @@ refresh_scenes:
     all configured devices. Use after adding, renaming, or deleting scenes in the
     Celebright app so Home Assistant picks them up without a reload. (Scenes also
     auto-refresh every 30 minutes.)
+
+export_library:
+  name: Export scene library
+  description: >
+    Return the raw saved-scene bodies and zone definitions for a Celebright
+    controller, exactly as the cloud stores them. Use it to back up your
+    scenes or to build tools on the scene format. Returns data only.
+  fields:
+    device_id:
+      name: Device ID
+      description: Celebright device ID. Optional if you only have one device.
+      required: false
+      selector:
+        text:

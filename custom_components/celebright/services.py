@@ -21,6 +21,7 @@ SERVICE_CREATE_EVENT = "create_event"
 SERVICE_UPDATE_EVENT = "update_event"
 SERVICE_DELETE_EVENT = "delete_event"
 SERVICE_REFRESH_SCENES = "refresh_scenes"
+SERVICE_EXPORT_LIBRARY = "export_library"
 
 # Recurrence frequency, as the app stores it (verified against live events):
 #   0 = one-time (interval stored as null)
@@ -64,6 +65,8 @@ UPDATE_EVENT_SCHEMA = vol.Schema(
         vol.Exclusive("event_name", "event_id"): cv.string,
     }
 )
+
+EXPORT_LIBRARY_SCHEMA = vol.Schema({vol.Optional("device_id"): cv.string})
 
 DELETE_EVENT_SCHEMA = vol.Schema(
     {
@@ -217,6 +220,10 @@ def async_register_services(hass: HomeAssistant) -> None:
         ack = await coord.async_delete_event(device_id, event_uuid)
         return {"deleted": ack}
 
+    async def _handle_export_library(call: ServiceCall) -> ServiceResponse:
+        coord, device_id = _find_coordinator(hass, call.data.get("device_id"))
+        return await coord.client.async_export_library(device_id)
+
     async def _handle_refresh_scenes(call: ServiceCall) -> None:
         # Refresh every loaded Celebright coordinator (no target needed).
         seen: set[int] = set()
@@ -241,6 +248,10 @@ def async_register_services(hass: HomeAssistant) -> None:
     hass.services.async_register(
         DOMAIN, SERVICE_REFRESH_SCENES, _handle_refresh_scenes,
     )
+    hass.services.async_register(
+        DOMAIN, SERVICE_EXPORT_LIBRARY, _handle_export_library,
+        schema=EXPORT_LIBRARY_SCHEMA, supports_response=SupportsResponse.ONLY,
+    )
 
 
 def async_unregister_services(hass: HomeAssistant) -> None:
@@ -251,5 +262,6 @@ def async_unregister_services(hass: HomeAssistant) -> None:
             SERVICE_UPDATE_EVENT,
             SERVICE_DELETE_EVENT,
             SERVICE_REFRESH_SCENES,
+            SERVICE_EXPORT_LIBRARY,
         ):
             hass.services.async_remove(DOMAIN, svc)
